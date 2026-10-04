@@ -214,3 +214,6 @@ mod tests;
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
+
+#[cfg(all(test, feature = "tokio"))]
+mod domain_routes_tests;

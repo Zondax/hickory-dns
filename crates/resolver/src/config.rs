@@ -51,7 +51,7 @@ use crate::proto::rr::Name;
 ///
 /// The `Default` implementation of this struct will be removed in a future version. Use
 /// [`Self::from_name_servers()`] instead. Note that a `ResolverConfig` with no name servers will
-/// produce a nonfunctional resolver.
+/// produce a nonfunctional resolver unless domain routes supply matching servers.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -64,6 +64,43 @@ pub struct ResolverConfig {
     pub search: Vec<Name>,
     /// Name servers to use for resolution
     pub name_servers: Vec<NameServerConfig>,
+    /// DNS servers for particular domains, selected by the longest matching suffix.
+    ///
+    /// A matching route replaces the default servers, including on failure. Routes for
+    /// the same domain are attempted in ascending `search_order`. This is a snapshot;
+    /// reload the configuration and rebuild the resolver after network changes.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub domain_routes: Vec<DomainRoute>,
+}
+
+/// A DNS resolver configuration for a domain and its subdomains.
+///
+/// Queries retain the resolver's cache, DNSSEC validation, and request options.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub struct DomainRoute {
+    /// Domain suffix matched on DNS label boundaries, ignoring case.
+    pub domain: Name,
+    /// Servers to use for matching queries. An empty list fails closed.
+    pub name_servers: Vec<NameServerConfig>,
+    /// Order among configurations for the same domain; lower values are tried first.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub search_order: u32,
+}
+
+impl DomainRoute {
+    /// Create a route with the default search order of zero.
+    pub fn new(domain: Name, name_servers: Vec<NameServerConfig>) -> Self {
+        Self {
+            domain,
+            name_servers,
+            search_order: 0,
+        }
+    }
 }
 
 impl ResolverConfig {
@@ -72,6 +109,7 @@ impl ResolverConfig {
     /// Connects via UDP and TCP.
     pub fn udp_and_tcp(config: &ServerGroup<'_>) -> Self {
         Self {
+            domain_routes: vec![],
             // TODO: this should get the hostname and use the basename as the default
             domain: None,
             search: vec![],
@@ -85,6 +123,7 @@ impl ResolverConfig {
     #[cfg(feature = "__tls")]
     pub fn tls(config: &ServerGroup<'_>) -> Self {
         Self {
+            domain_routes: vec![],
             // TODO: this should get the hostname and use the basename as the default
             domain: None,
             search: vec![],
@@ -98,6 +137,7 @@ impl ResolverConfig {
     #[cfg(feature = "__https")]
     pub fn https(config: &ServerGroup<'_>) -> Self {
         Self {
+            domain_routes: vec![],
             // TODO: this should get the hostname and use the basename as the default
             domain: None,
             search: vec![],
@@ -111,6 +151,7 @@ impl ResolverConfig {
     #[cfg(feature = "__quic")]
     pub fn quic(config: &ServerGroup<'_>) -> Self {
         Self {
+            domain_routes: vec![],
             // TODO: this should get the hostname and use the basename as the default
             domain: None,
             search: vec![],
@@ -124,6 +165,7 @@ impl ResolverConfig {
     #[cfg(feature = "__h3")]
     pub fn h3(config: &ServerGroup<'_>) -> Self {
         Self {
+            domain_routes: vec![],
             // TODO: this should get the hostname and use the basename as the default
             domain: None,
             search: vec![],
@@ -144,6 +186,7 @@ impl ResolverConfig {
         name_servers: Vec<NameServerConfig>,
     ) -> Self {
         Self {
+            domain_routes: vec![],
             domain,
             search,
             name_servers,
@@ -158,6 +201,8 @@ impl ResolverConfig {
     }
 
     /// Take the `domain`, `search`, and `name_servers` from the config.
+    ///
+    /// Domain routes are discarded. Use the public fields to retain routing information.
     pub fn into_parts(self) -> (Option<Name>, Vec<Name>, Vec<NameServerConfig>) {
         (self.domain, self.search, self.name_servers)
     }
